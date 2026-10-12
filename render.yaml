@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: potters-school
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /
+    disk:
+      name: potters-data
+      mountPath: /var/data
+      sizeGB: 1
