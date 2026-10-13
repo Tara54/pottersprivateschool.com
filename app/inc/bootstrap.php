@@ -88,6 +88,28 @@ function db(): PDO
     return $pdo;
 }
 
+/* Identifiant de connexion : adresse e-mail ou numéro de téléphone.
+   Le numéro est enregistré au format +226XXXXXXXX (8 chiffres = Burkina). Renvoie '' si invalide. */
+function login_id(string $raw): string
+{
+    $raw = trim($raw);
+    if (str_contains($raw, '@')) {
+        $m = mb_strtolower($raw);
+        return filter_var($m, FILTER_VALIDATE_EMAIL) ? $m : '';
+    }
+    $d = preg_replace('/\D+/', '', $raw);
+    if (str_starts_with($d, '00')) $d = substr($d, 2);
+    if (strlen($d) === 8) $d = '226' . $d;
+    return (strlen($d) >= 10 && strlen($d) <= 15) ? '+' . $d : '';
+}
+
+/* Affichage lisible : +226 70 12 34 56 */
+function login_id_label(string $id): string
+{
+    if (preg_match('/^\+226(\d{2})(\d{2})(\d{2})(\d{2})$/', $id, $m)) return "+226 $m[1] $m[2] $m[3] $m[4]";
+    return $id;
+}
+
 function migrate(PDO $pdo): void
 {
     $pdo->exec("
