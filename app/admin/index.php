@@ -33,8 +33,8 @@ if (!$hasUser) {
     $err = '';
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         csrf_check();
-        $name = post('name', 100); $email = mb_strtolower(post('email', 150)); $pw = (string)($_POST['password'] ?? '');
-        if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) $err = 'Indiquez un nom et une adresse e-mail valide.';
+        $name = post('name', 100); $email = login_id(post('email', 150)); $pw = (string)($_POST['password'] ?? '');
+        if ($name === '' || $email === '') $err = 'Indiquez un nom et une adresse e-mail ou un numéro de téléphone valide.';
         elseif ($pb = password_problem($pw)) $err = $pb;
         elseif ($pw !== ($_POST['password2'] ?? '')) $err = 'Les deux mots de passe ne sont pas identiques.';
         else {
@@ -66,7 +66,8 @@ if (!current_user()) {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         csrf_check();
         $ip = client_ip();
-        $email = mb_strtolower(post('email', 150));
+        $email = login_id(post('email', 150));
+        if ($email === '') $email = mb_strtolower(post('email', 150));
         db()->prepare('DELETE FROM login_attempts WHERE at < ?')->execute([time() - 900]);
         $st = db()->prepare('SELECT (SELECT COUNT(*) FROM login_attempts WHERE ip=?), (SELECT COUNT(*) FROM login_attempts WHERE email=?)');
         $st->execute([$ip, $email]);
@@ -93,7 +94,7 @@ if (!current_user()) {
             db()->prepare('INSERT INTO login_attempts(ip,at,email) VALUES(?,?,?)')->execute([$ip, time(), $email]);
             if ($u) log_action("Échec de connexion depuis $ip", (int)$u['id']);
             usleep(random_int(200000, 500000));
-            $err = 'Adresse e-mail ou mot de passe incorrect.';
+            $err = 'Identifiant (e-mail ou téléphone) ou mot de passe incorrect.';
         }
     }
     if (!$err && !empty($_SESSION['expired'])) { $err = 'Votre session a expiré. Reconnectez-vous.'; unset($_SESSION['expired']); }
@@ -198,13 +199,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 go('parametres');
             case 'user_add':
                 require_direction();
-                $email = mb_strtolower(post('email', 150)); $pw = (string)($_POST['password'] ?? '');
-                if (post('name') === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('Indiquez un nom et une adresse e-mail valide.');
+                $email = login_id(post('email', 150)); $pw = (string)($_POST['password'] ?? '');
+                if (post('name') === '' || $email === '') throw new RuntimeException('Indiquez un nom et une adresse e-mail ou un numéro de téléphone valide.');
+                $st = db()->prepare('SELECT COUNT(*) FROM users WHERE email=?'); $st->execute([$email]);
+                if ((int)$st->fetchColumn() > 0) throw new RuntimeException('Un compte existe déjà avec cet identifiant.');
                 if ($pb = password_problem($pw)) throw new RuntimeException($pb);
                 $role = ($_POST['role'] ?? '') === 'direction' ? 'direction' : 'secretariat';
                 db()->prepare('INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)')
                     ->execute([post('name', 100), $email, password_hash($pw, PASSWORD_DEFAULT), $role]);
-                log_action("Compte créé : $email");
+                log_action('Compte créé : ' . login_id_label($email));
                 flash('Compte créé. Communiquez le mot de passe à la personne en main propre.');
                 go('comptes');
             case 'user_toggle':
@@ -540,7 +543,7 @@ case 'comptes':
           <thead><tr><th>Nom</th><th>Rôle</th><th>Dernière connexion</th><th></th></tr></thead>
           <tbody><?php foreach ($rows as $r): ?>
           <tr class="<?= $r['active'] ? '' : 'off' ?>">
-            <td><strong><?= e($r['name']) ?></strong><br><small><?= e($r['email']) ?></small></td>
+            <td><strong><?= e($r['name']) ?></strong><br><small><?= e(login_id_label($r['email'])) ?></small></td>
             <td><?= $r['role'] === 'direction' ? 'Direction' : 'Secrétariat' ?><?= $r['active'] ? '' : '<br><small>Désactivé</small>' ?></td>
             <td><?= $r['last_login'] ? fdate($r['last_login']) : 'Jamais' ?></td>
             <td class="acts">
@@ -559,7 +562,7 @@ case 'comptes':
         <form method="post">
           <?= csrf_field() ?><input type="hidden" name="action" value="user_add">
           <label>Nom<input name="name" required maxlength="100"></label>
-          <label>E-mail<input type="email" name="email" required maxlength="150"></label>
+          <label>E-mail ou numéro de téléphone<input name="email" required maxlength="150" autocomplete="off" placeholder="ex. 70 12 34 56 ou nom@exemple.com"></label>
           <label>Mot de passe provisoire<input type="password" name="password" required minlength="10" autocomplete="new-password"></label>
           <label>Rôle<select name="role"><option value="secretariat">Secrétariat (demandes, actualités, galerie)</option><option value="direction">Direction (tout)</option></select></label>
           <button class="btn">Créer le compte</button>
@@ -619,7 +622,8 @@ function auth_page(string $title, string $err, bool $setup): void
   <form method="post">
     <?= csrf_field() ?>
     <?php if ($setup): ?><label>Nom<input name="name" required maxlength="100" value="<?= e($_POST['name'] ?? '') ?>"></label><?php endif; ?>
-    <label>Adresse e-mail<input type="email" name="email" required autocomplete="username" value="<?= e($_POST['email'] ?? '') ?>"></label>
+    <label>E-mail ou numéro de téléphone<input name="email" required autocomplete="username" inputmode="email" maxlength="150" placeholder="ex. 70 12 34 56 ou nom@exemple.com" value="<?= e($_POST['email'] ?? '') ?>"></label>
+    <?php if ($setup): ?><p class="hint">Ce sera votre identifiant de connexion. Numéro burkinabè : les 8 chiffres suffisent.</p><?php endif; ?>
     <label>Mot de passe<input type="password" name="password" required autocomplete="<?= $setup ? 'new-password' : 'current-password' ?>"<?= $setup ? ' minlength="10"' : '' ?>></label>
     <?php if ($setup): ?><label>Confirmer le mot de passe<input type="password" name="password2" required minlength="10" autocomplete="new-password"></label><?php endif; ?>
     <button class="btn"><?= $setup ? 'Créer le compte' : 'Se connecter' ?></button>
